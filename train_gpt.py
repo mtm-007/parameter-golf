@@ -57,14 +57,14 @@ class Hyperparameters:
     warmup_steps = int(os.environ.get("WARMUP_STEPS", 100))                        # 20 -> 100, 50
     train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 65536))          #524_288 -to-> 65536,131072 ,262144       # smaller global batch (half of default) → better for single GPU + small data
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 1024))
-    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
+    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 1200.0))   #time with L4 gpu aint enough 600 ->1200
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.0))                       #1.5 -> 1.0
 
     # Model shape.
     vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
-    num_layers = int(os.environ.get("NUM_LAYERS", 9))
+    num_layers = int(os.environ.get("NUM_LAYERS", 11))                               #9 -> 11    #biggest single arch from top leaderboard
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
-    model_dim = int(os.environ.get("MODEL_DIM", 512))
+    model_dim = int(os.environ.get("MODEL_DIM", 480))                                 #512 - > 480 (keeps param count similar)
     num_heads = int(os.environ.get("NUM_HEADS", 8))
     mlp_mult = int(os.environ.get("MLP_MULT", 2))
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
@@ -73,7 +73,7 @@ class Hyperparameters:
 
     # Optimizer hyperparameters.
     embed_lr = float(os.environ.get("EMBED_LR", 0.75))                                               #0.6 -> 0.75, 0.8
-    head_lr = float(os.environ.get("HEAD_LR", 0.008))                                               # if untied
+    head_lr = float(os.environ.get("HEAD_LR", 0.01))                                                 # 0.008 -> 0.01 #if untied
     tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.075))                                    #0.05 -> 0.075, 0.08
     tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
     matrix_lr = float(os.environ.get("MATRIX_LR", 0.065))                                            #0.04 -> 0.065, 0.07
@@ -86,7 +86,7 @@ class Hyperparameters:
     beta2 = float(os.environ.get("BETA2", 0.95))
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
     grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 1.0))                                   #0.0 - > 1.0
-
+    weight_decay = float(os.environ.get("WEIGHT_DECAY", 0.04))
 # -----------------------------
 # MUON OPTIMIZER 
 # -----------------------------
@@ -845,6 +845,16 @@ def main() -> None:
     compiled_model = torch.compile(base_model, dynamic=False, fullgraph=True)
     model: nn.Module = DDP(compiled_model, device_ids=[local_rank], broadcast_buffers=False) if distributed else compiled_model
 
+    # -----------------------------
+    # EMA (used in current SOTA #1, #2, #3)
+    # -----------------------------
+    ema_decay = 0.999                  # common value in top runs
+    ema_model = None
+    if master_process:
+        ema_model = copy.deepcopy(base_model)
+        ema_model.eval()
+        for p in ema_model.parameters():
+            p.requires_grad = False
     # Optimizer split:
     # - token embedding (Adam) uses EMBED_LR
     # - untied lm_head (Adam) uses HEAD_LR
@@ -868,6 +878,7 @@ def main() -> None:
         [{"params": [base_model.tok_emb.weight], "lr": token_lr, "base_lr": token_lr}],
         betas=(args.beta1, args.beta2),
         eps=args.adam_eps,
+        weight_decay=args.weight_decay,
         fused=True,
     )
     optimizer_muon = Muon(
@@ -882,6 +893,7 @@ def main() -> None:
         [{"params": scalar_params, "lr": args.scalar_lr, "base_lr": args.scalar_lr}],
         betas=(args.beta1, args.beta2),
         eps=args.adam_eps,
+        weight_decay= args.weight_decay,
         fused=True,
     )
     optimizers: list[torch.optim.Optimizer] = [optimizer_tok, optimizer_muon, optimizer_scalar]
@@ -890,6 +902,7 @@ def main() -> None:
             [{"params": [base_model.lm_head.weight], "lr": args.head_lr, "base_lr": args.head_lr}],
             betas=(args.beta1, args.beta2),
             eps=args.adam_eps,
+            weight_decay=args.weight_decay,
             fused=True,
         )
         optimizers.insert(1, optimizer_head)
@@ -963,7 +976,7 @@ def main() -> None:
         """Cosine decay — works much better than linear warmdown on short runs."""
         if args.iterations <= 0:
             return 1.0
-        #progress = min(step / args.iterations, 1.0)
+        
         # Warmup phase
         if step < args.warmup_steps:
             return (step + 1) / args.warmup_steps
@@ -1080,6 +1093,13 @@ def main() -> None:
             torch.nn.utils.clip_grad_norm_(base_model.parameters(), args.grad_clip_norm)
         for opt in optimizers:
             opt.step()
+
+        # === EMA UPDATE - MUST BE HERE ===
+        if master_process and ema_model is not None:
+            with torch.no_grad():
+                for p_ema, p in zip(ema_model.parameters(), base_model.parameters()):
+                    p_ema.data.mul_(ema_decay).add_(p.data, alpha=1 - ema_decay)
+
         zero_grad_all()
 
         step += 1
@@ -1124,6 +1144,13 @@ def main() -> None:
         f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB "
         f"reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB"
     )
+
+    # -----------------------------
+    # USE EMA FOR FINAL EVALUATION & EXPORT (if enabled)
+    # -----------------------------
+    if master_process and 'ema_model' in locals() and ema_model is not None:
+        print("Using EMA weights for final evaluation and export")
+        base_model.load_state_dict(ema_model.state_dict())
 
     # -----------------------------
     # SERIALIZATION + ROUNDTRIP VALIDATION
