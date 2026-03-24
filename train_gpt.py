@@ -26,6 +26,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
+import wandb
 
 # -----------------------------
 # HYPERPARAMETERS
@@ -46,18 +47,18 @@ class Hyperparameters:
     seed = int(os.environ.get("SEED", 1337))
 
     # Validation cadence and batch size. Validation always uses the full fineweb_val split.
-    val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))
-    val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 1000))
-    train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 200))
+    val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 131072))                 #524_288 -> 131072
+    val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 100))                    # 1000 ->100
+    train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 50))                   # 200 ->50
 
     # Training length.
-    iterations = int(os.environ.get("ITERATIONS", 20000))
-    warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 1200))
-    warmup_steps = int(os.environ.get("WARMUP_STEPS", 20))
-    train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 524_288))
+    iterations = int(os.environ.get("ITERATIONS", 500))                            #for test runs was 20000
+    warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 100))                    # 1200 -> 100
+    warmup_steps = int(os.environ.get("WARMUP_STEPS", 50))                         # 20 -> 50
+    train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 65536))          #524_288 -to-> 65536,131072 ,262144       # smaller global batch (half of default) → better for single GPU + small data
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 1024))
     max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
-    qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
+    qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.0))                       #1.5 -> 1.0
 
     # Model shape.
     vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
@@ -68,23 +69,23 @@ class Hyperparameters:
     mlp_mult = int(os.environ.get("MLP_MULT", 2))
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
-    logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
+    logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 20.0))                                    #30.0 - >20.0
 
     # Optimizer hyperparameters.
-    embed_lr = float(os.environ.get("EMBED_LR", 0.6))
-    head_lr = float(os.environ.get("HEAD_LR", 0.008))
-    tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.05))
+    embed_lr = float(os.environ.get("EMBED_LR", 0.8))                                               #0.6 -> 0.8
+    head_lr = float(os.environ.get("HEAD_LR", 0.008))                                               # if untied
+    tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.08))                                    #0.05 -> 0.08
     tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
-    matrix_lr = float(os.environ.get("MATRIX_LR", 0.04))
-    scalar_lr = float(os.environ.get("SCALAR_LR", 0.04))
+    matrix_lr = float(os.environ.get("MATRIX_LR", 0.07))                                            #0.04 -> 0.07
+    scalar_lr = float(os.environ.get("SCALAR_LR", 0.07))                                            # 0.04 -> 0.07
     muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.95))
-    muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))
-    muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.85))
-    muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 500))
+    muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))   
+    muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.9))           # 0.85 -> 0.9
+    muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 300))             #500 -> 300
     beta1 = float(os.environ.get("BETA1", 0.9))
     beta2 = float(os.environ.get("BETA2", 0.95))
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
-    grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 0.0))
+    grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 1.0))                                   #0.0 - > 1.0
 
 # -----------------------------
 # MUON OPTIMIZER 
@@ -733,6 +734,7 @@ def main() -> None:
 
     code = Path(__file__).read_text(encoding="utf-8")
     args = Hyperparameters()
+    
     zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
 
     # -----------------------------
@@ -893,6 +895,31 @@ def main() -> None:
         optimizers.insert(1, optimizer_head)
 
     n_params = sum(p.numel() for p in base_model.parameters())
+
+    # -----------------------------
+    # WANDB SETUP
+    # -----------------------------
+    if master_process:
+        wandb.init(
+            project='Llm_training_andrej_ver',          # ← change to your project name
+            name=f"run_{int(time.time())}",             # unique run name         # uses your existing RUN_ID
+            config={
+                # All hyperparameters (automatically pulls from the class)
+                **{k: v for k, v in vars(args).items() if not k.startswith("_")},
+                # Extra useful info
+                "world_size": world_size,
+                "grad_accum_steps": grad_accum_steps,
+                "model_params": n_params,      # we'll compute this later, but you can move it up
+                "torch_version": torch.__version__,
+            },
+            save_code=True,                   # optional: saves the script
+        )
+        # Optional: save the training script
+        wandb.run.log_code() if hasattr(wandb, "run") and wandb.run is not None else None
+    else:
+        # Non-master ranks: do nothing (no init, no logging)
+        pass
+
     log0(f"model_params:{n_params}")
     log0(f"world_size:{world_size} grad_accum_steps:{grad_accum_steps}")
     log0("sdp_backends:cudnn=False flash=True mem_efficient=False math=False")
@@ -921,16 +948,29 @@ def main() -> None:
 
     max_wallclock_ms = 1000.0 * args.max_wallclock_seconds if args.max_wallclock_seconds > 0 else None
 
+    # def lr_mul(step: int, elapsed_ms: float) -> float:
+    #     if args.warmdown_iters <= 0:
+    #         return 1.0
+    #     if max_wallclock_ms is None:
+    #         warmdown_start = max(args.iterations - args.warmdown_iters, 0)
+    #         return max((args.iterations - step) / max(args.warmdown_iters, 1), 0.0) if warmdown_start <= step < args.iterations else 1.0
+    #     step_ms = elapsed_ms / max(step, 1)
+    #     warmdown_ms = args.warmdown_iters * step_ms
+    #     remaining_ms = max(max_wallclock_ms - elapsed_ms, 0.0)
+    #     return remaining_ms / max(warmdown_ms, 1e-9) if remaining_ms <= warmdown_ms else 1.0
+    
     def lr_mul(step: int, elapsed_ms: float) -> float:
-        if args.warmdown_iters <= 0:
+        """Cosine decay — works much better than linear warmdown on short runs."""
+        if args.iterations <= 0:
             return 1.0
-        if max_wallclock_ms is None:
-            warmdown_start = max(args.iterations - args.warmdown_iters, 0)
-            return max((args.iterations - step) / max(args.warmdown_iters, 1), 0.0) if warmdown_start <= step < args.iterations else 1.0
-        step_ms = elapsed_ms / max(step, 1)
-        warmdown_ms = args.warmdown_iters * step_ms
-        remaining_ms = max(max_wallclock_ms - elapsed_ms, 0.0)
-        return remaining_ms / max(warmdown_ms, 1e-9) if remaining_ms <= warmdown_ms else 1.0
+        #progress = min(step / args.iterations, 1.0)
+        # Warmup phase
+        if step < args.warmup_steps:
+            return (step + 1) / args.warmup_steps
+        # Cosine decay
+        progress = (step - args.warmup_steps) / max(1, args.iterations - args.warmup_steps)
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+        #return 0.5 * (1.0 + math.cos(math.pi * (progress - args.warmup_steps / args.iterations)))
 
     # Warmup primes the compiled forward/backward/optimizer paths, then we restore the
     # initial weights/optimizer state so measured training starts from the true init.
@@ -993,6 +1033,15 @@ def main() -> None:
                 f"step:{step}/{args.iterations} val_loss:{val_loss:.4f} val_bpb:{val_bpb:.4f} "
                 f"train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms"
             )
+            if master_process:
+                wandb.log({
+                    "step": step,
+                    "val_loss": val_loss,
+                    "val_bpb": val_bpb,
+                    "train_time_ms": training_time_ms,
+                    "step_avg_ms": training_time_ms / max(step, 1),
+                }, step=step)
+
             torch.cuda.synchronize()
             t0 = time.perf_counter()
 
@@ -1040,10 +1089,27 @@ def main() -> None:
             and (step <= 10 or step % args.train_log_every == 0 or stop_after_step is not None)
         )
         if should_log_train:
+            log_dict = {
+                "step": step,
+                "train_loss": train_loss.item(),
+                "train_time_ms": approx_training_time_ms,
+                "step_avg_ms": approx_training_time_ms / step,
+                "lr_scale": scale,
+                "muon_momentum": muon_momentum,
+            }
+
+            # Optional: log current learning rates from each optimizer
+            for i, opt in enumerate(optimizers):
+                for group in opt.param_groups:
+                    if "base_lr" in group:
+                        log_dict[f"lr_optimizer_{i}"] = group["lr"]
+
             log0(
                 f"step:{step}/{args.iterations} train_loss:{train_loss.item():.4f} "
                 f"train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / step:.2f}ms"
             )
+            if master_process:
+                wandb.log(log_dict, step=step)
 
         # Needed to sync whether we've reached the wallclock cap.
         reached_cap = max_wallclock_ms is not None and approx_training_time_ms >= max_wallclock_ms
@@ -1117,6 +1183,20 @@ def main() -> None:
         f"eval_time:{1000.0 * (time.perf_counter() - t_qeval):.0f}ms"
     )
     log0(f"final_int8_zlib_roundtrip_exact val_loss:{q_val_loss:.8f} val_bpb:{q_val_bpb:.8f}")
+
+    if master_process:
+        artifact = wandb.Artifact(name=f"model-{args.run_id}", type="model")
+        artifact.add_file("final_model.int8.ptz")
+        wandb.log_artifact(artifact)
+
+        wandb.log({
+            "final_val_loss": q_val_loss,
+            "final_val_bpb": q_val_bpb,
+            "peak_memory_allocated_MiB": torch.cuda.max_memory_allocated() // 1024 // 1024,
+            "peak_memory_reserved_MiB": torch.cuda.max_memory_reserved() // 1024 // 1024,
+            "quantization_ratio": ratio,          # add this
+        })
+        wandb.finish()
 
     if distributed:
         dist.destroy_process_group()
