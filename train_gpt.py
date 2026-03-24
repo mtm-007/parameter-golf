@@ -48,13 +48,13 @@ class Hyperparameters:
 
     # Validation cadence and batch size. Validation always uses the full fineweb_val split.
     val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 131072))                 #524_288 -> 131072
-    val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 100))                    # 1000 ->100
+    val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 200))                    # 1000 -> 200,100
     train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 50))                   # 200 ->50
 
     # Training length.
-    iterations = int(os.environ.get("ITERATIONS", 500))                            #for test runs was 20000
-    warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 100))                    # 1200 -> 100
-    warmup_steps = int(os.environ.get("WARMUP_STEPS", 50))                         # 20 -> 50
+    iterations = int(os.environ.get("ITERATIONS", 2000))                           #20000  -> 2000, 500
+    warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 400))                    # 1200 -> 400, 100
+    warmup_steps = int(os.environ.get("WARMUP_STEPS", 100))                        # 20 -> 100, 50
     train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 65536))          #524_288 -to-> 65536,131072 ,262144       # smaller global batch (half of default) → better for single GPU + small data
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 1024))
     max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
@@ -72,16 +72,16 @@ class Hyperparameters:
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 20.0))                                    #30.0 - >20.0
 
     # Optimizer hyperparameters.
-    embed_lr = float(os.environ.get("EMBED_LR", 0.8))                                               #0.6 -> 0.8
+    embed_lr = float(os.environ.get("EMBED_LR", 0.75))                                               #0.6 -> 0.75, 0.8
     head_lr = float(os.environ.get("HEAD_LR", 0.008))                                               # if untied
-    tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.08))                                    #0.05 -> 0.08
+    tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.075))                                    #0.05 -> 0.075, 0.08
     tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
-    matrix_lr = float(os.environ.get("MATRIX_LR", 0.07))                                            #0.04 -> 0.07
-    scalar_lr = float(os.environ.get("SCALAR_LR", 0.07))                                            # 0.04 -> 0.07
+    matrix_lr = float(os.environ.get("MATRIX_LR", 0.065))                                            #0.04 -> 0.065, 0.07
+    scalar_lr = float(os.environ.get("SCALAR_LR", 0.065))                                            # 0.04 -> 0.065, 0.07
     muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.95))
     muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))   
     muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.9))           # 0.85 -> 0.9
-    muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 300))             #500 -> 300
+    muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 500))             #500 -> 500, 300
     beta1 = float(os.environ.get("BETA1", 0.9))
     beta2 = float(os.environ.get("BETA2", 0.95))
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
@@ -1200,6 +1200,32 @@ def main() -> None:
 
     if distributed:
         dist.destroy_process_group()
+    
+    # -----------------------------
+    # CLEAN UP GPU MEMORY FOR NEXT RUN
+    # -----------------------------
+    if master_process:
+        print("Cleaning up GPU memory for next run...")
+
+    # Delete heavy objects
+    del model
+    del base_model
+    del compiled_model
+    del optimizers
+    del train_loader
+    if 'optimizer_tok' in locals(): del optimizer_tok
+    if 'optimizer_muon' in locals(): del optimizer_muon
+    if 'optimizer_scalar' in locals(): del optimizer_scalar
+    if 'optimizer_head' in locals(): del optimizer_head
+
+    # Force garbage collection + clear cache
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    if master_process:
+        print(f"After cleanup - Allocated: {torch.cuda.memory_allocated()/1024**2:.1f} MB | "
+              f"Reserved: {torch.cuda.memory_reserved()/1024**2:.1f} MB")
 
 
 if __name__ == "__main__":
