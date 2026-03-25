@@ -52,10 +52,10 @@ class Hyperparameters:
     train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 50))                   # 200 ->50
 
     # Training length.
-    iterations = int(os.environ.get("ITERATIONS", 2000))                           #20000  -> 2000, 500
+    iterations = int(os.environ.get("ITERATIONS", 2500))                           #20000  -> 2500, 2000, 500
     warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 400))                    # 1200 -> 400, 100
-    warmup_steps = int(os.environ.get("WARMUP_STEPS", 100))                        # 20 -> 100, 50
-    train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 65536))          #524_288 -to-> 65536,131072 ,262144       # smaller global batch (half of default) → better for single GPU + small data
+    warmup_steps = int(os.environ.get("WARMUP_STEPS", 100))                        # 20 -> 100, 20, 100, 50
+    train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 65536))          #524_288 -to-> 131072, 65536 ,262144       # smaller global batch (half of default) → better for single GPU + small data
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 1024))
     max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 1200.0))   #time with L4 gpu aint enough 600 ->1200
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.0))                       #1.5 -> 1.0
@@ -66,7 +66,7 @@ class Hyperparameters:
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
     model_dim = int(os.environ.get("MODEL_DIM", 480))                                 #512 - > 480 (keeps param count similar)
     num_heads = int(os.environ.get("NUM_HEADS", 8))
-    mlp_mult = int(os.environ.get("MLP_MULT", 2))
+    mlp_mult = int(os.environ.get("MLP_MULT", 3))                                       # 2 -> 3
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 20.0))                                    #30.0 - >20.0
@@ -81,12 +81,12 @@ class Hyperparameters:
     muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.95))
     muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))   
     muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.9))           # 0.85 -> 0.9
-    muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 500))             #500 -> 500, 300
+    muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 200))             #500 -> 200, 500, 300
     beta1 = float(os.environ.get("BETA1", 0.9))
     beta2 = float(os.environ.get("BETA2", 0.95))
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
     grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 1.0))                                   #0.0 - > 1.0
-    weight_decay = float(os.environ.get("WEIGHT_DECAY", 0.04))
+    weight_decay = float(os.environ.get("WEIGHT_DECAY", 0.01))
 # -----------------------------
 # MUON OPTIMIZER 
 # -----------------------------
@@ -232,6 +232,7 @@ def eval_val(
     # Validation computes two metrics:
     # - val_loss: token cross-entropy (natural log)
     # - val_bpb: tokenizer-agnostic compression metric used by the challenge
+    stride = 64                                                                             #add sliding-window evaluation
     local_batch_tokens = args.val_batch_size // (world_size * grad_accum_steps)
     if local_batch_tokens < args.train_seq_len:
         raise ValueError(
@@ -254,18 +255,23 @@ def eval_val(
             raw_start = batch_seq_start * args.train_seq_len
             raw_end = batch_seq_end * args.train_seq_len + 1
             local = val_tokens[raw_start:raw_end].to(device=device, dtype=torch.int64, non_blocking=True)
-            x = local[:-1].reshape(-1, args.train_seq_len)
-            y = local[1:].reshape(-1, args.train_seq_len)
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
-                batch_loss = model(x, y).detach()
-            batch_token_count = float(y.numel())
-            val_loss_sum += batch_loss.to(torch.float64) * batch_token_count
-            val_token_count += batch_token_count
-            prev_ids = x.reshape(-1)
-            tgt_ids = y.reshape(-1)
-            token_bytes = base_bytes_lut[tgt_ids].to(dtype=torch.int16)
-            token_bytes += (has_leading_space_lut[tgt_ids] & ~is_boundary_token_lut[prev_ids]).to(dtype=torch.int16)
-            val_byte_count += token_bytes.to(torch.float64).sum()
+            
+            # x = local[:-1].reshape(-1, args.train_seq_len)
+            # y = local[1:].reshape(-1, args.train_seq_len)
+            # Sliding window
+            for i in range(0, local.numel() - args.train_seq_len, stride):
+                x = local[i:i+args.train_seq_len].unsqueeze(0)
+                y = local[i+1:i+args.train_seq_len+1].unsqueeze(0)
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
+                    batch_loss = model(x, y).detach()
+                batch_token_count = float(y.numel())
+                val_loss_sum += batch_loss.to(torch.float64) * batch_token_count
+                val_token_count += batch_token_count
+                prev_ids = x.reshape(-1)
+                tgt_ids = y.reshape(-1)
+                token_bytes = base_bytes_lut[tgt_ids].to(dtype=torch.int16)
+                token_bytes += (has_leading_space_lut[tgt_ids] & ~is_boundary_token_lut[prev_ids]).to(dtype=torch.int16)
+                val_byte_count += token_bytes.to(torch.float64).sum()
 
     if dist.is_available() and dist.is_initialized():
         dist.all_reduce(val_loss_sum, op=dist.ReduceOp.SUM)
@@ -305,7 +311,7 @@ INT8_KEEP_FLOAT_FP32_NAME_PATTERNS = tuple(
 INT8_KEEP_FLOAT_MAX_NUMEL = 65_536
 INT8_KEEP_FLOAT_STORE_DTYPE = torch.float16
 INT8_PER_ROW_SCALE_DTYPE = torch.float16
-INT8_CLIP_PERCENTILE = 99.99984
+INT8_CLIP_PERCENTILE = 99.99984                                         #int quantize
 INT8_CLIP_Q = INT8_CLIP_PERCENTILE / 100.0
 
 def tensor_nbytes(t: Tensor) -> int:
@@ -421,7 +427,6 @@ def dequantize_state_dict_int8(obj: dict[str, object]) -> dict[str, Tensor]:
             out_t = out_t.to(dtype=getattr(torch, orig_dtype)).contiguous()
         out[name] = out_t
     return out
-
 
 # -----------------------------
 # DATA LOADING 
@@ -848,7 +853,7 @@ def main() -> None:
     # -----------------------------
     # EMA (used in current SOTA #1, #2, #3)
     # -----------------------------
-    ema_decay = 0.999                  # common value in top runs
+    ema_decay = 0.99                          #.999 -> 0.99     # common value in top runs
     ema_model = None
     if master_process:
         ema_model = copy.deepcopy(base_model)
@@ -902,7 +907,7 @@ def main() -> None:
             [{"params": [base_model.lm_head.weight], "lr": args.head_lr, "base_lr": args.head_lr}],
             betas=(args.beta1, args.beta2),
             eps=args.adam_eps,
-            weight_decay=args.weight_decay,
+            weight_decay= args.weight_decay,
             fused=True,
         )
         optimizers.insert(1, optimizer_head)
@@ -961,30 +966,16 @@ def main() -> None:
 
     max_wallclock_ms = 1000.0 * args.max_wallclock_seconds if args.max_wallclock_seconds > 0 else None
 
-    # def lr_mul(step: int, elapsed_ms: float) -> float:
-    #     if args.warmdown_iters <= 0:
-    #         return 1.0
-    #     if max_wallclock_ms is None:
-    #         warmdown_start = max(args.iterations - args.warmdown_iters, 0)
-    #         return max((args.iterations - step) / max(args.warmdown_iters, 1), 0.0) if warmdown_start <= step < args.iterations else 1.0
-    #     step_ms = elapsed_ms / max(step, 1)
-    #     warmdown_ms = args.warmdown_iters * step_ms
-    #     remaining_ms = max(max_wallclock_ms - elapsed_ms, 0.0)
-    #     return remaining_ms / max(warmdown_ms, 1e-9) if remaining_ms <= warmdown_ms else 1.0
-    
-    def lr_mul(step: int, elapsed_ms: float) -> float:
-        """Cosine decay — works much better than linear warmdown on short runs."""
+    def lr_mul(step: int) -> float:
+        """Cosine decay with linear warmup. Warmup here is the LR schedule warmup
+        applied during measured training — distinct from the JIT warmup_steps loop."""
         if args.iterations <= 0:
             return 1.0
-        
-        # Warmup phase
         if step < args.warmup_steps:
             return (step + 1) / args.warmup_steps
-        # Cosine decay
         progress = (step - args.warmup_steps) / max(1, args.iterations - args.warmup_steps)
         return 0.5 * (1.0 + math.cos(math.pi * progress))
-        #return 0.5 * (1.0 + math.cos(math.pi * (progress - args.warmup_steps / args.iterations)))
-
+        
     # Warmup primes the compiled forward/backward/optimizer paths, then we restore the
     # initial weights/optimizer state so measured training starts from the true init.
     if args.warmup_steps > 0:
@@ -1067,7 +1058,7 @@ def main() -> None:
             break
 
         elapsed_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
-        scale = lr_mul(step, elapsed_ms)
+        scale = lr_mul(step)#elapsed_ms)
         zero_grad_all()
         train_loss = torch.zeros((), device=device)
         for micro_step in range(grad_accum_steps):
@@ -1109,37 +1100,33 @@ def main() -> None:
             and (step <= 10 or step % args.train_log_every == 0 or stop_after_step is not None)
         )
         if should_log_train:
-            log_dict = {
-                "step": step,
-                "train_loss": train_loss.item(),
-                "train_time_ms": approx_training_time_ms,
-                "step_avg_ms": approx_training_time_ms / step,
-                "lr_scale": scale,
-                "muon_momentum": muon_momentum,
-            }
-
-            # Optional: log current learning rates from each optimizer
-            for i, opt in enumerate(optimizers):
-                for group in opt.param_groups:
-                    if "base_lr" in group:
-                        log_dict[f"lr_optimizer_{i}"] = group["lr"]
-
             log0(
                 f"step:{step}/{args.iterations} train_loss:{train_loss.item():.4f} "
                 f"train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / step:.2f}ms"
             )
             if master_process:
+                log_dict = {
+                    "step": step, "train_loss": train_loss.item(),
+                    "train_time_ms": approx_training_time_ms, "step_avg_ms": approx_training_time_ms / step,
+                    "lr_scale": scale, "muon_momentum": muon_momentum,
+                }
+                for i, opt in enumerate(optimizers):
+                    for group in opt.param_groups:
+                        if "base_lr" in group:
+                            log_dict[f"lr_optimizer_{i}"] = group["lr"]
                 wandb.log(log_dict, step=step)
 
         # Needed to sync whether we've reached the wallclock cap.
-        reached_cap = max_wallclock_ms is not None and approx_training_time_ms >= max_wallclock_ms
-        if distributed and max_wallclock_ms is not None:
-            reached_cap_tensor = torch.tensor(int(reached_cap), device=device)
-            dist.all_reduce(reached_cap_tensor, op=dist.ReduceOp.MAX)
-            reached_cap = bool(reached_cap_tensor.item())
+        reached_cap = False
+        if max_wallclock_ms is not None and (should_log_train or last_step):
+            reached_cap = approx_training_time_ms >= max_wallclock_ms
+            if distributed:
+                reached_cap_tensor = torch.tensor(int(reached_cap), device=device)
+                dist.all_reduce(reached_cap_tensor, op=dist.ReduceOp.MAX)
+                reached_cap = bool(reached_cap_tensor.item())
         if stop_after_step is None and reached_cap:
             stop_after_step = step
-
+ 
     log0(
         f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB "
         f"reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB"
@@ -1148,8 +1135,9 @@ def main() -> None:
     # -----------------------------
     # USE EMA FOR FINAL EVALUATION & EXPORT (if enabled)
     # -----------------------------
-    if master_process and 'ema_model' in locals() and ema_model is not None:
-        print("Using EMA weights for final evaluation and export")
+    #if master_process and 'ema_model' in locals() and ema_model is not None:
+    if master_process and ema_model is not None:
+        log0("Using EMA weights for final evaluation and export")
         base_model.load_state_dict(ema_model.state_dict())
 
     # -----------------------------
@@ -1234,26 +1222,10 @@ def main() -> None:
     if master_process:
         print("Cleaning up GPU memory for next run...")
 
-    # Delete heavy objects
-    del model
-    del base_model
-    del compiled_model
-    del optimizers
-    del train_loader
-    if 'optimizer_tok' in locals(): del optimizer_tok
-    if 'optimizer_muon' in locals(): del optimizer_muon
-    if 'optimizer_scalar' in locals(): del optimizer_scalar
-    if 'optimizer_head' in locals(): del optimizer_head
-
-    # Force garbage collection + clear cache
     import gc
+    del model, base_model, compiled_model, optimizers, train_loader
     gc.collect()
     torch.cuda.empty_cache()
-
-    if master_process:
-        print(f"After cleanup - Allocated: {torch.cuda.memory_allocated()/1024**2:.1f} MB | "
-              f"Reserved: {torch.cuda.memory_reserved()/1024**2:.1f} MB")
-
 
 if __name__ == "__main__":
     main()
