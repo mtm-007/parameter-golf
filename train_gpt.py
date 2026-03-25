@@ -235,15 +235,13 @@ def eval_val(
     stride = 64                                                                             #add sliding-window evaluation
     local_batch_tokens = args.val_batch_size // (world_size * grad_accum_steps)
     if local_batch_tokens < args.train_seq_len:
-        raise ValueError(
-            "VAL_BATCH_SIZE must provide at least one sequence per rank; "
-            f"got VAL_BATCH_SIZE={args.val_batch_size}, WORLD_SIZE={world_size}, "
-            f"GRAD_ACCUM_STEPS={grad_accum_steps}, TRAIN_SEQ_LEN={args.train_seq_len}"
-        )
+        raise ValueError(...)
+
     local_batch_seqs = local_batch_tokens // args.train_seq_len
     total_seqs = (val_tokens.numel() - 1) // args.train_seq_len
     seq_start = (total_seqs * rank) // world_size
     seq_end = (total_seqs * (rank + 1)) // world_size
+
     val_loss_sum = torch.zeros((), device=device, dtype=torch.float64)
     val_token_count = torch.zeros((), device=device, dtype=torch.float64)
     val_byte_count = torch.zeros((), device=device, dtype=torch.float64)
@@ -255,24 +253,27 @@ def eval_val(
             raw_start = batch_seq_start * args.train_seq_len
             raw_end = batch_seq_end * args.train_seq_len + 1
             local = val_tokens[raw_start:raw_end].to(device=device, dtype=torch.int64, non_blocking=True)
-            
+
             # x = local[:-1].reshape(-1, args.train_seq_len)
             # y = local[1:].reshape(-1, args.train_seq_len)
             # Sliding window
             for i in range(0, local.numel() - args.train_seq_len, stride):
-                x = local[i:i+args.train_seq_len].unsqueeze(0)
-                y = local[i+1:i+args.train_seq_len+1].unsqueeze(0)
+                x = local[i : i + args.train_seq_len].unsqueeze(0)
+                y = local[i + 1 : i + args.train_seq_len + 1].unsqueeze(0)
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
                     batch_loss = model(x, y).detach()
+
                 batch_token_count = float(y.numel())
                 val_loss_sum += batch_loss.to(torch.float64) * batch_token_count
                 val_token_count += batch_token_count
+
                 prev_ids = x.reshape(-1)
                 tgt_ids = y.reshape(-1)
                 token_bytes = base_bytes_lut[tgt_ids].to(dtype=torch.int16)
                 token_bytes += (has_leading_space_lut[tgt_ids] & ~is_boundary_token_lut[prev_ids]).to(dtype=torch.int16)
                 val_byte_count += token_bytes.to(torch.float64).sum()
 
+    # reduction code stays identical
     if dist.is_available() and dist.is_initialized():
         dist.all_reduce(val_loss_sum, op=dist.ReduceOp.SUM)
         dist.all_reduce(val_token_count, op=dist.ReduceOp.SUM)
@@ -283,7 +284,6 @@ def eval_val(
     tokens_per_byte = val_token_count.item() / val_byte_count.item()
     model.train()
     return float(val_loss.item()), float(bits_per_token * tokens_per_byte)
-
 # -----------------------------
 # POST-TRAINING QUANTIZATION
 # -----------------------------
@@ -619,9 +619,9 @@ class MLP(nn.Module):
         self.proj._zero_init = True
 
     def forward(self, x: Tensor) -> Tensor:
-        x = torch.relu(self.fc(x))
+        #x = torch.relu(self.fc(x))
+        x = F.leaky_relu(self.fc(x), negative_slope=0.5)                                            #adding LeakyReLU²
         return self.proj(x.square())
-
 
 class Block(nn.Module):
     def __init__(
@@ -803,7 +803,6 @@ def main() -> None:
     # -----------------------------
     # TOKENIZER + VALIDATION METRIC SETUP
     # -----------------------------
-
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -853,7 +852,7 @@ def main() -> None:
     # -----------------------------
     # EMA (used in current SOTA #1, #2, #3)
     # -----------------------------
-    ema_decay = 0.99                          #.999 -> 0.99     # common value in top runs
+    ema_decay = 0.995                          #.999 -> 0.995, 0.99     # common value in top runs
     ema_model = None
     if master_process:
         ema_model = copy.deepcopy(base_model)
