@@ -52,7 +52,7 @@ class Hyperparameters:
     train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 50))                   # 200 ->50
 
     # Training length.
-    iterations = int(os.environ.get("ITERATIONS", 2000))                           #20000  -> 2000, 500
+    iterations = int(os.environ.get("ITERATIONS", 2500))                           #20000  -> 2500, 2000, 500
     warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 400))                    # 1200 -> 400, 100
     warmup_steps = int(os.environ.get("WARMUP_STEPS", 100))                        # 20 -> 100, 50
     train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 65536))          #524_288 -to-> 65536,131072 ,262144       # smaller global batch (half of default) → better for single GPU + small data
