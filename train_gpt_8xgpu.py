@@ -47,26 +47,26 @@ class Hyperparameters:
     seed = int(os.environ.get("SEED", 1337))
 
     # Validation cadence and batch size. Validation always uses the full fineweb_val split.
-    val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))                 #524_288 -> 131072
-    val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 1000))                    # 1000 -> 200,100
-    train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 200))                   # 200 ->50
+    val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))                 #524_288 -> 1_048_576, 131072
+    val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 2000))                    # 1000 -> 2000, 200,100
+    train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 500))                   # 200 ->500, 50
 
     # Training length
     iterations = int(os.environ.get("ITERATIONS", 20000))                           #20000  -> 2500, 2000, 500
-    warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 400))                    # 1200 -> 400, 100
-    warmup_steps = int(os.environ.get("WARMUP_STEPS", 100))                        # 20 -> 100, 50
-    train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 524_288))          #524_288 -to-> 65536,131072 ,262144       # smaller global batch (half of default) → better for single GPU + small data
+    warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 1200))                    # 1200 -> 1200, 400, 100
+    warmup_steps = int(os.environ.get("WARMUP_STEPS", 20))                        # 20 -> 300, 100, 50
+    train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 524_288))          #524_288 -to-> 1_048_576, 65536,131072 ,262144       # smaller global batch (half of default) → better for single GPU + small data
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 1024))
     max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))   #time with L4 gpu aint enough 600 ->1200
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.0))                       #1.5 -> 1.0
 
     # Model shape.
     vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
-    num_layers = int(os.environ.get("NUM_LAYERS", 11))                               #9 -> 11    #biggest single arch from top leaderboard
+    num_layers = int(os.environ.get("NUM_LAYERS", 9))                               #9 -> 11    #biggest single arch from top leaderboard
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
-    model_dim = int(os.environ.get("MODEL_DIM", 480))                                 #512 - > 480 (keeps param count similar)
+    model_dim = int(os.environ.get("MODEL_DIM", 512))                                 #512 - > 512, 480 (keeps param count similar)
     num_heads = int(os.environ.get("NUM_HEADS", 8))
-    mlp_mult = int(os.environ.get("MLP_MULT", 3))
+    mlp_mult = int(os.environ.get("MLP_MULT", 2))                                                   #2 -> 3
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 20.0))                                    #30.0 - >20.0
@@ -74,14 +74,14 @@ class Hyperparameters:
     # Optimizer hyperparameters.
     embed_lr = float(os.environ.get("EMBED_LR", 0.75))                                               #0.6 -> 0.75, 0.8
     head_lr = float(os.environ.get("HEAD_LR", 0.01))                                                 # 0.008 -> 0.01 #if untied
-    tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.075))                                    #0.05 -> 0.075, 0.08
+    tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.050))                                    #0.05 -> 0.050, 0.075, 0.08
     tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
-    matrix_lr = float(os.environ.get("MATRIX_LR", 0.065))                                            #0.04 -> 0.065, 0.07
-    scalar_lr = float(os.environ.get("SCALAR_LR", 0.065))                                            # 0.04 -> 0.065, 0.07
+    matrix_lr = float(os.environ.get("MATRIX_LR", 0.05))                                            #0.04 -> 0.05, 0.04, 0.065, 0.07
+    scalar_lr = float(os.environ.get("SCALAR_LR", 0.05))                                            # 0.04 -> 0.05, 0.04, 0.065, 0.07
     muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.95))
-    muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))   
+    muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 6))                               #5 -> 6
     muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.9))           # 0.85 -> 0.9
-    muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 500))             #500 -> 500, 300
+    muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 300))             #500 -> 300, 800, 500, 300
     beta1 = float(os.environ.get("BETA1", 0.9))
     beta2 = float(os.environ.get("BETA2", 0.95))
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
@@ -305,7 +305,7 @@ INT8_KEEP_FLOAT_FP32_NAME_PATTERNS = tuple(
 INT8_KEEP_FLOAT_MAX_NUMEL = 65_536
 INT8_KEEP_FLOAT_STORE_DTYPE = torch.float16
 INT8_PER_ROW_SCALE_DTYPE = torch.float16
-INT8_CLIP_PERCENTILE = 99.99984
+INT8_CLIP_PERCENTILE = 99.9990
 INT8_CLIP_Q = INT8_CLIP_PERCENTILE / 100.0
 
 def tensor_nbytes(t: Tensor) -> int:
@@ -489,7 +489,7 @@ class DistributedTokenLoader:
         per_rank_span = local_tokens + 1
         chunk = self.stream.take(per_rank_span * self.world_size)
         start = self.rank * per_rank_span
-        local = chunk[start : start + per_rank_span].to(dtype=torch.int64)
+        local = chunk[start : start + per_rank_span].to(dtype=torch.int64).pin_memory()
         x = local[:-1].reshape(-1, seq_len)
         y = local[1:].reshape(-1, seq_len)
         return x.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
@@ -844,7 +844,8 @@ def main() -> None:
             module.float()
     restore_low_dim_params_to_fp32(base_model)
     compiled_model = torch.compile(base_model, dynamic=False, fullgraph=True)
-    model: nn.Module = DDP(compiled_model, device_ids=[local_rank], broadcast_buffers=False) if distributed else compiled_model
+    model: nn.Module = DDP(compiled_model, device_ids=[local_rank], broadcast_buffers=False, gradient_as_bucket_view=True) if distributed else compiled_model
+    #model = torch.compile(model, dynamic=False, fullgraph=True)
 
     # Optimizer split:
     # - token embedding (Adam) uses EMBED_LR

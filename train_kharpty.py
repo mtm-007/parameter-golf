@@ -49,16 +49,16 @@ class Hyperparameters:
     run_id          = os.environ.get("RUN_ID", str(uuid.uuid4()))
     seed            = int(os.environ.get("SEED", 1337))
 
-    val_batch_size  = int(os.environ.get("VAL_BATCH_SIZE",  131072))
-    val_loss_every  = int(os.environ.get("VAL_LOSS_EVERY",  200))
-    train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 50))
+    val_batch_size  = int(os.environ.get("VAL_BATCH_SIZE",  524_288))                                   #131072  -> 524_288
+    val_loss_every  = int(os.environ.get("VAL_LOSS_EVERY",  3000))
+    train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 500))
 
-    iterations          = int(os.environ.get("ITERATIONS",       2000))
-    warmup_steps        = int(os.environ.get("WARMUP_STEPS",     100))
-    warmdown_iters      = int(os.environ.get("WARMDOWN_ITERS",   400))
-    train_batch_tokens  = int(os.environ.get("TRAIN_BATCH_TOKENS", 65536))
+    iterations          = int(os.environ.get("ITERATIONS",       20000))
+    warmup_steps        = int(os.environ.get("WARMUP_STEPS",     20))
+    warmdown_iters      = int(os.environ.get("WARMDOWN_ITERS",   1200))
+    train_batch_tokens  = int(os.environ.get("TRAIN_BATCH_TOKENS", 524_288))                            #65536  -> 524_288
     train_seq_len       = int(os.environ.get("TRAIN_SEQ_LEN",    1024))
-    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 1200.0))
+    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
 
     # GPT-2 style model shape
     vocab_size   = int(os.environ.get("VOCAB_SIZE",   1024))   # sp1024 tokenizer

@@ -23,9 +23,45 @@ VOCAB_SIZE=1024 \
 torchrun --standalone --nproc_per_node=1 train_kharpty.py
 
 
+RUN_ID=baseline_sp1024 \
+DATA_PATH=./data/datasets/fineweb10B_sp1024/ \
+TOKENIZER_PATH=./data/tokenizers/fineweb_1024_bpe.model \
+VOCAB_SIZE=1024 \
+torchrun --standalone --nproc_per_node=8 train_kharpty.py
+
 
 RUN_ID=baseline_sp1024 \
 DATA_PATH=./data/datasets/fineweb10B_sp1024/ \
 TOKENIZER_PATH=./data/tokenizers/fineweb_1024_bpe.model \
 VOCAB_SIZE=1024 \
 torchrun --standalone --nproc_per_node=1 train_gpt_prev_val_bpb_1.42_benchmark.py
+
+
+
+
+RUN_ID=baseline_sp1024 \
+DATA_PATH=./data/datasets/fineweb10B_sp1024/ \
+TOKENIZER_PATH=./data/tokenizers/fineweb_1024_bpe.model \
+VOCAB_SIZE=1024 \
+torchrun --standalone --nproc_per_node=8 train_gpt_prev_val_bpb_1.42_benchmark.py
+
+
+
+RUN_ID=baseline_sp1024 \
+DATA_PATH=./data/datasets/fineweb10B_sp1024/ \
+TOKENIZER_PATH=./data/tokenizers/fineweb_1024_bpe.model \
+VOCAB_SIZE=1024 \
+torchrun --standalone --nproc_per_node=8 train_gpt_8xgpu.py
+
+
+
+
+2026-03-27 07:28:23.193274              2:28  8xA100 run wallclock 600
+           07:45:39.032000              2:45
+           08:05:02.127000              3:05
+           08:18:15.430000              3:18
+           08:35:51.676000              3:35   - 3:47
+
+
+train_kharpty old gpt-2 architecture
+           08:56:28.800000             3:57
