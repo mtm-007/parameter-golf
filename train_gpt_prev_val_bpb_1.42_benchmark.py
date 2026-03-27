@@ -47,17 +47,17 @@ class Hyperparameters:
     seed = int(os.environ.get("SEED", 1337))
 
     # Validation cadence and batch size. Validation always uses the full fineweb_val split.
-    val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 131072))                 #524_288 -> 131072
-    val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 200))                    # 1000 -> 200,100
-    train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 50))                   # 200 ->50
+    val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))                 #524_288 -> 131072
+    val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 1000))                    # 1000 -> 200,100
+    train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 200))                   # 200 ->50
 
-    # Training length.
-    iterations = int(os.environ.get("ITERATIONS", 2500))                           #20000  -> 2500, 2000, 500
+    # Training length
+    iterations = int(os.environ.get("ITERATIONS", 20000))                           #20000  -> 2500, 2000, 500
     warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 400))                    # 1200 -> 400, 100
     warmup_steps = int(os.environ.get("WARMUP_STEPS", 100))                        # 20 -> 100, 50
-    train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 65536))          #524_288 -to-> 65536,131072 ,262144       # smaller global batch (half of default) → better for single GPU + small data
+    train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 524_288))          #524_288 -to-> 65536,131072 ,262144       # smaller global batch (half of default) → better for single GPU + small data
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 1024))
-    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 1200.0))   #time with L4 gpu aint enough 600 ->1200
+    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 3600.0))   #time with L4 gpu aint enough 600 ->1200
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.0))                       #1.5 -> 1.0
 
     # Model shape.
