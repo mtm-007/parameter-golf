@@ -26,6 +26,8 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from torch import Tensor, nn
+
+from flash_attention import HAS_FA3
 from torch.nn.parallel import DistributedDataParallel as DDP
 import wandb
 
@@ -70,7 +72,7 @@ class Hyperparameters:
     logit_softcap  = float(os.environ.get("LOGIT_SOFTCAP", 20.0))
 
     # Flash Attention 3 — off by default, requires H100 + flash-attn>=2.5
-    use_fa3 = bool(int(os.environ.get("USE_FA3", "0")))
+    use_fa3 = bool(int(os.environ.get("USE_FA3", "1")))
 
     # Optimizer
     embed_lr            = float(os.environ.get("EMBED_LR",             0.75))

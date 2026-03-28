@@ -1,6 +1,7 @@
 numpy
 tqdm
-torch
+torch==2.2
+flash-attn>=2.5
 huggingface-hub
 kernels
 setuptools
