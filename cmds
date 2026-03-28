@@ -54,6 +54,13 @@ VOCAB_SIZE=1024 \
 torchrun --standalone --nproc_per_node=8 train_gpt_8xgpu.py
 
 
+RUN_ID=baseline_sp1024 \
+DATA_PATH=./data/datasets/fineweb10B_sp1024/ \
+TOKENIZER_PATH=./data/tokenizers/fineweb_1024_bpe.model \
+VOCAB_SIZE=1024 \
+torchrun --standalone --nproc_per_node=1 train_gpt_nanochatmerged.py
+
+
 
 
 # Level 0: pure GPT-2 baseline
@@ -92,7 +99,11 @@ LevelNew features                                       Expected bpb vs L0
            08:35:51.676000              3:35   - 3:47
 
                                         8:16
+                                        4:19
+                                        4:42
 
 
 train_kharpty old gpt-2 architecture
            08:56:28.800000             3:57
+                                       3:47     level 0
+                                       4:04           0

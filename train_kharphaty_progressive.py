@@ -12,8 +12,8 @@ Control via ARCH_LEVEL environment variable:
   ARCH_LEVEL=5  →  + logit softcap + ReLU² + CastedLinear (full modern)
 
 Run:
-  ARCH_LEVEL=0 torchrun --standalone --nproc_per_node=8 train_progressive.py
-  ARCH_LEVEL=2 torchrun --standalone --nproc_per_node=8 train_progressive.py
+  ARCH_LEVEL=0 torchrun --standalone --nproc_per_node=8 train_kharphaty_progressive.py
+  ARCH_LEVEL=2 torchrun --standalone --nproc_per_node=8 train_kharphaty_progressive.py
   etc.
 """
 
@@ -56,19 +56,19 @@ class Hyperparameters:
     seed           = int(os.environ.get("SEED", 1337))
 
     val_batch_size  = int(os.environ.get("VAL_BATCH_SIZE",  524_288))
-    val_loss_every  = int(os.environ.get("VAL_LOSS_EVERY",  4000))
+    val_loss_every  = int(os.environ.get("VAL_LOSS_EVERY",  1000))
     train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 500))
 
     iterations            = int(os.environ.get("ITERATIONS",            20000))
     warmup_steps          = int(os.environ.get("WARMUP_STEPS",          100))
     train_batch_tokens    = int(os.environ.get("TRAIN_BATCH_TOKENS",    524_288))
     train_seq_len         = int(os.environ.get("TRAIN_SEQ_LEN",         1024))
-    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 3600.0))
+    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 1200.0))
     qk_gain_init          = float(os.environ.get("QK_GAIN_INIT",         1.0))
 
     # Model — same size budget across all levels for fair comparison
     vocab_size    = int(os.environ.get("VOCAB_SIZE",    1024))
-    num_layers    = int(os.environ.get("NUM_LAYERS",    9))
+    num_layers    = int(os.environ.get("NUM_LAYERS",    10))
     model_dim     = int(os.environ.get("MODEL_DIM",     512))
     num_heads     = int(os.environ.get("NUM_HEADS",     8))
     num_kv_heads  = int(os.environ.get("NUM_KV_HEADS",  4))   # used at ARCH_LEVEL >= 3
@@ -554,8 +554,8 @@ class Block(nn.Module):
         super().__init__()
         Norm = RMSNorm if use_rmsnorm else nn.LayerNorm
 
-        self.attn_norm = Norm()
-        self.mlp_norm  = Norm()
+        self.attn_norm = nn.LayerNorm(dim) if not use_rmsnorm else RMSNorm()
+        self.mlp_norm  = nn.LayerNorm(dim) if not use_rmsnorm else RMSNorm()
         self.attn = CausalSelfAttention(
             dim, num_heads, num_kv_heads,
             use_rope, use_qk_norm, use_qk_gain,
@@ -666,7 +666,7 @@ class ProgressiveGPT(nn.Module):
         ])
 
         Norm = RMSNorm if use_rmsnorm else nn.LayerNorm
-        self.final_norm = Norm()
+        self.final_norm = nn.LayerNorm(args.model_dim) if not use_rmsnorm else RMSNorm()
 
         self.lm_head = (None if args.tie_embeddings
                         else (CastedLinear if use_casted_linear else nn.Linear)(
