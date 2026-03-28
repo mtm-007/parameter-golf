@@ -56,11 +56,42 @@ torchrun --standalone --nproc_per_node=8 train_gpt_8xgpu.py
 
 
 
+# Level 0: pure GPT-2 baseline
+ARCH_LEVEL=0 RUN_ID=arch_l0 ... torchrun --nproc_per_node=1 train_progressive.py
+
+# Level 2: + RoPE + RMSNorm + Muon (biggest jump expected)
+ARCH_LEVEL=2 RUN_ID=arch_l2 ... torchrun --nproc_per_node=8 train_progressive.py
+
+# Level 5: full modern (your current script equivalent)
+ARCH_LEVEL=5 RUN_ID=arch_l5 ... torchrun --nproc_per_node=8 train_progressive.py
+
+# Level 2
+
+ARCH_LEVEL=2 \
+RUN_ID=arch_l2 \
+DATA_PATH=./data/datasets/fineweb10B_sp1024/ \
+TOKENIZER_PATH=./data/tokenizers/fineweb_1024_bpe.model \
+VOCAB_SIZE=1024 \
+torchrun --standalone --nproc_per_node=1 train_kharphaty_progressive.py
+
+
+LevelNew features                                       Expected bpb vs L0
+0   Pure GPT-2                                          baseline
+1   RoPE + RMSNorm + QK-norm                            ~-0.04
+2   + Muon optimizer                                    ~-0.09
+3   + GQA + learned scales + QK-gain                    ~-0.11
+4   + U-Net skips + resid_mix + CastedLinear            ~-0.13
+5   + logit softcap + ReLU² + mlp_mult=2                ~-0.14
+
+
+
 2026-03-27 07:28:23.193274              2:28  8xA100 run wallclock 600
            07:45:39.032000              2:45
            08:05:02.127000              3:05
            08:18:15.430000              3:18
            08:35:51.676000              3:35   - 3:47
+
+                                        8:16
 
 
 train_kharpty old gpt-2 architecture
