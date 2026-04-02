@@ -48,7 +48,7 @@ class Hyperparameters:
 
     # Validation cadence and batch size. Validation always uses the full fineweb_val split.
     val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))                 #524_288 -> 1_048_576, 131072
-    val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 2000))                    # 1000 -> 2000, 200,100
+    val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 1000))                    # 1000 -> 2000, 200,100
     train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 500))                   # 200 ->500, 50
 
     # Training length
@@ -57,14 +57,14 @@ class Hyperparameters:
     warmup_steps = int(os.environ.get("WARMUP_STEPS", 20))                        # 20 -> 300, 100, 50
     train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 524_288))          #524_288 -to-> 1_048_576, 65536,131072 ,262144       # smaller global batch (half of default) → better for single GPU + small data
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 1024))
-    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))   #time with L4 gpu aint enough 600 ->1200
+    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 1200.0))   #time with L4 gpu aint enough 600 ->1200
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.0))                       #1.5 -> 1.0
 
     # Model shape.
     vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
-    num_layers = int(os.environ.get("NUM_LAYERS", 9))                               #9 -> 11    #biggest single arch from top leaderboard
+    num_layers = int(os.environ.get("NUM_LAYERS", 11))                               #9 -> 11    #biggest single arch from top leaderboard
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
-    model_dim = int(os.environ.get("MODEL_DIM", 512))                                 #512 - > 512, 480 (keeps param count similar)
+    model_dim = int(os.environ.get("MODEL_DIM", 480))                                 #512 - > 512, 480 (keeps param count similar)
     num_heads = int(os.environ.get("NUM_HEADS", 8))
     mlp_mult = int(os.environ.get("MLP_MULT", 2))                                                   #2 -> 3
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
@@ -78,15 +78,18 @@ class Hyperparameters:
     tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
     matrix_lr = float(os.environ.get("MATRIX_LR", 0.05))                                            #0.04 -> 0.05, 0.04, 0.065, 0.07
     scalar_lr = float(os.environ.get("SCALAR_LR", 0.05))                                            # 0.04 -> 0.05, 0.04, 0.065, 0.07
-    muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.95))
+    muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.99))                                    # 0.95 -> 0.99
     muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 6))                               #5 -> 6
-    muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.9))           # 0.85 -> 0.9
+    muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.92))           # 0.85 -> 0.92, 0.9
     muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 300))             #500 -> 300, 800, 500, 300
     beta1 = float(os.environ.get("BETA1", 0.9))
     beta2 = float(os.environ.get("BETA2", 0.95))
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
     grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 1.0))                                   #0.0 - > 1.0
-    #weight_decay = float(os.environ.get("WEIGHT_DECAY", 0.04))
+    weight_decay = float(os.environ.get("WEIGHT_DECAY", 0.04))
+    muon_row_norm = bool(int(os.environ.get("MUON_ROW_NORM", "0")))            
+    muon_grad_clip = float(os.environ.get("MUON_GRAD_CLIP", "0.0"))            
+    muon_turbo_ns = bool(int(os.environ.get("MUON_TURBO_NS", "0")))            
 # -----------------------------
 # MUON OPTIMIZER 
 # -----------------------------
@@ -94,7 +97,7 @@ class Hyperparameters:
 # As borrowed from modded-nanogpt
 # Background on Muon: https://kellerjordan.github.io/posts/muon/
 
-def zeropower_via_newtonschulz5(G: Tensor, steps: int = 10, eps: float = 1e-7) -> Tensor:
+def zeropower_via_newtonschulz5(G: Tensor, steps: int = 5, eps: float = 1e-7) -> Tensor:
     # Orthogonalize a 2D update matrix with a fast Newton-Schulz iteration.
     # Muon uses this to normalize matrix-shaped gradients before applying them.
     a, b, c = (3.4445, -4.7750, 2.0315)
@@ -109,12 +112,31 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int = 10, eps: float = 1e-7) -
         X = a * X + B @ X
     return X.T if transposed else X
 
+def zeropower_via_turbomuon(G:Tensor, steps: int = 3, eps: float = 1e-7) -> Tensor:
+    X = G.bfloat16()
+    transposed = G.size(0) > G.size(1)
+    if transposed:
+        X = X.T 
+    s = X.norm() + eps 
+    X = X / s 
+    XtX = X.T @ X 
+    d = XtX.diagonal().clamp(min=eps) 
+    X = X / d.sqrt().unsqueeze(0)
+    X /= X.norm() + eps 
+    a, b, c = (3.4445, -4.7750, 2.0315)
+    for _ in range(steps):
+        A = X @ X.T 
+        B = b * A + c * A @ A 
+        X = a * X + B @ X
+    return X.T if transposed else X
 
 class Muon(torch.optim.Optimizer):
-    def __init__(self, params, lr: float, momentum: float, backend_steps: int, nesterov: bool = True):
+    def __init__(self, params, lr: float, momentum: float, backend_steps: int, nesterov: bool = True, 
+                 weight_decay: float = 0.0, row_norm: bool=False, grad_clip: float = 0.0, turbo_ns: bool = False):
         super().__init__(
             params,
-            dict(lr=lr, momentum=momentum, backend_steps=backend_steps, nesterov=nesterov),
+            dict(lr=lr, momentum=momentum, backend_steps=backend_steps, nesterov=nesterov,
+                 weight_decay=weight_decay, row_norm=row_norm, grad_clip=grad_clip, turbo_ns=turbo_ns),
         )
 
     @torch.no_grad()
@@ -129,32 +151,63 @@ class Muon(torch.optim.Optimizer):
         rank = dist.get_rank() if distributed else 0
 
         for group in self.param_groups:
-            params = group["params"]
+            params = [p for p in group["params"] if p is not None]
             if not params:
                 continue
             lr = group["lr"]
             momentum = group["momentum"]
             backend_steps = group["backend_steps"]
             nesterov = group["nesterov"]
+            weight_decay= group["weight_decay"]
+            row_norm=group["row_norm"]
+            grad_clip=group["grad_clip"]
+            turbo_ns=group["turbo_ns"]
 
+            orth_fn = zeropower_via_turbomuon if turbo_ns else zeropower_via_newtonschulz5
             total_params = sum(int(p.numel()) for p in params)
             updates_flat = torch.zeros(total_params, device=params[0].device, dtype=torch.bfloat16)
 
             curr = 0
             for i, p in enumerate(params):
                 if i % world_size == rank and p.grad is not None:
-                    g = p.grad
+                    g = p.grad.float()          # cast to fp32 for numerical stability
+
+                    if grad_clip > 0.0:         #optional per-param gradient clip
+                        g_norm = g.norm()
+                        if g_norm > grad_clip:
+                            g = g * (grad_clip / (g_norm + 1e-7))
+                    
                     state = self.state[p]
                     if "momentum_buffer" not in state:
-                        state["momentum_buffer"] = torch.zeros_like(g)
+                        state["momentum_buffer"] = torch.zeros_like(g, dtype=torch.float32)  # explicit fp32 buffer
                     buf = state["momentum_buffer"]
                     buf.mul_(momentum).add_(g)
                     if nesterov:
                         g = g.add(buf, alpha=momentum)
-                    g = zeropower_via_newtonschulz5(g, steps=backend_steps)
+                    # ── Reshape to 2D for orthogonalization ───────────────
+                    # 4D conv: flatten last 3 dims (standard Muon practice)  
+                    orig_shape = g.shape
+                    if g.ndim == 4:                     # conv support: flotten last 3 dims
+                        g = g.view(g.size(0), -1)
+                    elif g.ndim != 2:
+                        updates_flat[curr : curr + p.numel()] = g.reshape(-1).bfloat16()
+                        curr += p.numel()
+                        continue
+                    
+                    g = orth_fn(g, steps=backend_steps)                 # ── Orthogonalize ──
+                    #g = zeropower_via_newtonschulz5(g, steps=backend_steps)
                     # Scale correction from Muon reference implementations.
-                    g *= max(1, g.size(0) / g.size(1)) ** 0.5
-                    updates_flat[curr : curr + p.numel()] = g.reshape(-1)
+                    #g *= max(1, g.size(0) / g.size(1)) ** 0.5
+                    # Moonlight eq. 3: correct RMS across all layer shapes
+                    g *= math.sqrt(max(g.size(0), g.size(1)))           # was: max(1, m/n)**0.5
+                    # ── Optional NorMuon: row-wise (neuron) normalization ──
+                    # After orthogonalization, neuron norms can be non-uniform;
+                    # normalizing each row's update stabilizes large-model training
+                    if row_norm:                                        #optioinal NorMuon neuron normalization
+                        row_norms = g.norm(dim=1, keepdim=True).clamp(min=1e-7)
+                        g = g * (row_norms.mean() / row_norms)
+                    g = g.view(orig_shape)
+                    updates_flat[curr : curr + p.numel()] = g.reshape(-1).bfloat16()
                 curr += p.numel()
 
             if distributed:
@@ -163,6 +216,8 @@ class Muon(torch.optim.Optimizer):
             curr = 0
             for p in params:
                 g = updates_flat[curr : curr + p.numel()].view_as(p).to(dtype=p.dtype)
+                if weight_decay != 0.0:
+                    p.mul_(1.0 - lr * weight_decay)                     # decoupled weight decay
                 p.add_(g, alpha=-lr)
                 curr += p.numel()
 
@@ -731,12 +786,13 @@ class GPT(nn.Module):
 # -----------------------------
 
 def main() -> None:
-    global zeropower_via_newtonschulz5
+    global zeropower_via_newtonschulz5, zeropower_via_turbomuon
 
     code = Path(__file__).read_text(encoding="utf-8")
     args = Hyperparameters()
     
     zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
+    zeropower_via_turbomuon = torch.compile(zeropower_via_turbomuon)
 
     # -----------------------------
     # DISTRIBUTED + CUDA SETUP
@@ -877,6 +933,10 @@ def main() -> None:
         lr=args.matrix_lr,
         momentum=args.muon_momentum,
         backend_steps=args.muon_backend_steps,
+        weight_decay=args.weight_decay,
+        row_norm=args.muon_row_norm,
+        grad_clip=args.muon_grad_clip,
+        turbo_ns=args.muon_turbo_ns,
     )
     for group in optimizer_muon.param_groups:
         group["base_lr"] = args.matrix_lr
