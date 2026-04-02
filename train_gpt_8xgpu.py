@@ -47,24 +47,24 @@ class Hyperparameters:
     seed = int(os.environ.get("SEED", 1337))
 
     # Validation cadence and batch size. Validation always uses the full fineweb_val split.
-    val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))                 #524_288 -> 1_048_576, 131072
-    val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 1000))                    # 1000 -> 2000, 200,100
+    val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 131072))                 #524_288 -> 1_048_576, 131072
+    val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 2000))                    # 1000 -> 2000, 200,100
     train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 500))                   # 200 ->500, 50
 
     # Training length
     iterations = int(os.environ.get("ITERATIONS", 20000))                           #20000  -> 2500, 2000, 500
     warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 1200))                    # 1200 -> 1200, 400, 100
     warmup_steps = int(os.environ.get("WARMUP_STEPS", 20))                        # 20 -> 300, 100, 50
-    train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 524_288))          #524_288 -to-> 1_048_576, 65536,131072 ,262144       # smaller global batch (half of default) → better for single GPU + small data
+    train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 65536))          #524_288 -to-> 1_048_576, 65536,131072 ,262144       # smaller global batch (half of default) → better for single GPU + small data
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 1024))
-    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 1200.0))   #time with L4 gpu aint enough 600 ->1200
+    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 300.0))   #time with L4 gpu aint enough 600 ->1200
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.0))                       #1.5 -> 1.0
 
     # Model shape.
     vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
     num_layers = int(os.environ.get("NUM_LAYERS", 11))                               #9 -> 11    #biggest single arch from top leaderboard
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
-    model_dim = int(os.environ.get("MODEL_DIM", 480))                                 #512 - > 512, 480 (keeps param count similar)
+    model_dim = int(os.environ.get("MODEL_DIM", 448))                                 #512 - > 512, 448, 480 (keeps param count similar)
     num_heads = int(os.environ.get("NUM_HEADS", 8))
     mlp_mult = int(os.environ.get("MLP_MULT", 2))                                                   #2 -> 3
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
